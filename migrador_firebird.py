@@ -341,7 +341,8 @@ class MigradorFirebirdApp:
         self.concluido = False
         self.erro = None
         self.progress = 0
-        self.max_progress = 2 + (len(fila) * 2) + 1
+        # 1 (Preparo FB5) + N (Backups) + 1 (Transição Motores) + N (Restaurações)
+        self.max_progress = 2 + (len(fila) * 2)
         self.status_text = "Iniciando checagens de ambiente..."
         self.em_execucao = True
 
@@ -730,6 +731,7 @@ class MigradorFirebirdApp:
                 })
                 self.progress += 1
 
+            self.progress = self.max_progress
             self.status_text = "Migração concluída com sucesso!"
             self.log("==========================================================")
             self.log("MIGRAÇÃO FINALIZADA COM SUCESSO.")
