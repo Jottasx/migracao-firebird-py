@@ -72,6 +72,20 @@ class MigradorFirebirdApp:
                 self.style.theme_use(tema)
                 break
 
+        # Correção oficial para o bug do Tkinter/Tk 8.6 onde tag_configure
+        # ignora background/foreground nos temas 'vista' e 'winnative'
+        def fixed_map(option):
+            return [
+                elm for elm in self.style.map("Treeview", query_opt=option)
+                if elm[:2] != ("!disabled", "!selected")
+            ]
+
+        self.style.map(
+            "Treeview",
+            foreground=fixed_map("foreground"),
+            background=fixed_map("background"),
+        )
+
         self.font_padrao = ("Segoe UI", 9)
         self.font_titulo = ("Segoe UI", 10, "bold")
         self.font_gbak = ("Consolas", 8)
