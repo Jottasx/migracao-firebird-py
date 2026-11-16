@@ -1,0 +1,47 @@
+# ==========================================
+# Ambientes Virtuais e Cache do Python
+# ==========================================
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ==========================================
+# PyInstaller (Build e Executáveis Gerados)
+# ==========================================
+build/
+dist/
+*.spec
+*.manifest
+
+# ==========================================
+# Binários Pesados e Arquivos do Firebird
+# (Evita subir ZIPs grandes ou bases de teste no Git)
+# ==========================================
+Binarios/*.zip
+*.fdb
+*.fbk
+*.gbk
+
+# ==========================================
+# Logs e Arquivos Temporários de Execução
+# ==========================================
+Logs/
+*.log
+Migracao_FB25_FB50_*.txt
+temp_migracao_*
+temp_fb50_*
+
+# ==========================================
+# Editores e Sistema Operacional (VS Code / Windows)
+# ==========================================
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+*.swp
