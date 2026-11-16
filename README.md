@@ -42,3 +42,102 @@ MigradorFirebird/
 ├── _internal/                  # Runtime Python 3.8 e bibliotecas gráficas Tkinter
 └── Binarios/
     └── Firebird_5_0.zip        # Pacote com os binários portáteis do Firebird 5.0
+```
+
+> **Atenção:** Certifique-se de que o arquivo `firebird.conf` contido dentro do arquivo `Firebird_5_0.zip` está devidamente configurado com `RemoteServicePort = 53052`, e mantenha a pasta `_internal/` sempre no mesmo diretório do `MigradorFirebird.exe`.
+
+---
+
+## ⚙️ Mapeamento de Ambientes e Serviços
+
+| Parâmetro | Firebird 2.5 (Origem) | Firebird 5.0 (Destino) |
+| :--- | :--- | :--- |
+| **Porta de Rede TCP** | `53052` | `53052` *(Porta mantida)* |
+| **Diretório no Servidor** | `C:\Fortes\Firebird\Firebird_2_5` | `C:\Fortes\Firebird\Firebird_5_0` |
+| **Nome do Serviço** | `FirebirdServerFortes_FB2_5` *(e variações)* | `FirebirdServerFortes_FB5_0` |
+| **Serviço Guardian** | `FirebirdGuardianFortes_FB2_5` | Descontinuado no FB 5.0 |
+| **Page Size Padrão** | Original (ex.: 4096) | **8192 bytes** (`-p 8192`) |
+| **Versão da ODS** | ODS 11.2 | ODS 13.x |
+
+---
+
+## 🖥️ Mapeamento dos Sistemas Suportados
+
+A aplicação identifica automaticamente o módulo correspondente analisando a nomenclatura do arquivo ou a pasta onde a base reside:
+
+| Sistema | Arquivo de Dados | Arquivo .INI | Pasta Padrão Fortes |
+| :--- | :--- | :--- | :--- |
+| **AC** | `AC.fdb` | `AC.ini` *(inalterado)* | `C:\Fortes\AC` |
+| **Ponto** | `Ponto.fdb` | `Ponto.ini` *(inalterado)* | `C:\Fortes\Ponto` |
+| **AG** | `AG.fdb` | `AG.ini` *(inalterado)* | `C:\Fortes\AG` |
+| **Patrio** | `Patrio.fdb` | `Patrio.ini` *(inalterado)* | `C:\Fortes\Patrio` |
+| **Cargas** | `Cargas.fdb` | `Cargas.ini` *(inalterado)* | `C:\Fortes\Cargas` |
+| **Frota** | `Frota.fdb` | `Frota.ini` *(inalterado)* | `C:\Fortes\Frota` |
+
+---
+
+## 📋 Pré-requisitos do Servidor
+
+1. **Sistema Operacional:** Windows Server 2008 R2 SP1 / Windows Server 2012 R2 ou superior / Windows 10 ou 11 (x86/x64).
+2. **Dependência de Execução:** Pacote `Microsoft Visual C++ 2015-2022 Redistributable` instalado no servidor (necessário tanto para o runtime empacotado quanto para os binários do Firebird 5.0).
+3. **Privilégios Administrativos:** Execução obrigatória com privilégios de Administrador local (solicitado automaticamente via UAC ao abrir o executável).
+4. **Espaço Livre em Disco:** Pelo menos **2,5x** o tamanho somado das bases de dados selecionadas.
+
+---
+
+## 🛠️ Passo a Passo Operacional
+
+1. Solicite o encerramento das aplicações Fortes em todos os terminais e no próprio servidor.
+2. Extraia o conteúdo do utilitário em um diretório local do servidor (ex.: `C:\MigradorFirebird`).
+3. Execute o aplicativo **`MigradorFirebird.exe`** (confirme a elevação de Administrador no prompt do Windows).
+4. Na tela inicial:
+   * Clique em **`Adicionar...`** e selecione uma ou mais bases `.fdb` (segurando `Ctrl` para seleção múltipla na mesma pasta).
+   * Repita a operação caso existam bases em outros diretórios (ex.: AC, Ponto, Frota).
+   * Para descartar itens incorretos da lista, selecione a linha e clique em **`Remover`**.
+5. Clique no botão **`INICIAR`** e confirme o diálogo de início.
+6. Acompanhe as etapas pelo painel:
+   * **Fila de Bancos:** Indica o status em tempo real por sistema.
+   * **Acompanhamento do GBAK:** Exibe o processamento linha a linha das tabelas e índices.
+   * **Log Geral de Operações:** Exibe a checagem de binários, paradas de serviço e eventos do sistema.
+7. Ao término, a mensagem de sucesso será exibida na tela.
+8. Clique no botão **`Ver Log (.txt)`** para revisar o arquivo completo de auditoria gerado em `C:\Fortes\Logs\`.
+
+---
+
+## 🔄 Procedimento de Contingência (Rollback)
+
+Caso ocorra qualquer imprevisto e seja necessário restabelecer o ambiente anterior:
+
+1. **Restaurar a Base Legada:**
+   * Acesse o diretório da base (ex.: `C:\Fortes\AC`).
+   * Remova ou renomeie a base recém-criada `AC.fdb`.
+   * Localize o arquivo de salvaguarda gerado pela ferramenta (`Backup_AC_<Data>_FB_2_5.fdb`) e renomeie-o de volta para `AC.fdb`.
+
+2. **Reativar o Serviço do Firebird 2.5:**
+   Abra o Prompt de Comando (CMD) como Administrador e execute:
+   ```cmd
+   net stop FirebirdServerFortes_FB5_0
+   sc config FirebirdServerFortes_FB5_0 start= demand
+   "C:\Fortes\Firebird\Firebird_2_5\bin\instreg.exe" install "C:\Fortes\Firebird\Firebird_2_5"
+   "C:\Fortes\Firebird\Firebird_2_5\bin\instsvc.exe" install -auto -name Fortes_FB2_5
+   "C:\Fortes\Firebird\Firebird_2_5\bin\instsvc.exe" start -name Fortes_FB2_5
+   ```
+
+---
+
+## 🏗️ Build e Desenvolvimento (Para Equipe Interna)
+
+Caso seja necessário gerar uma nova compilação do executável a partir do código-fonte (`migrador_firebird.py`):
+
+1. Utilize **Python 3.8.10** (mantendo compatibilidade com Windows Server 2008 R2 e 2012 R2).
+2. Crie e ative o ambiente virtual e instale o PyInstaller:
+   ```powershell
+   & "$env:LOCALAPPDATA\Programs\Python\Python38\python.exe" -m venv .venv
+   .venv\Scripts\activate
+   pip install pyinstaller
+   ```
+3. Compile o pacote de distribuição:
+   ```powershell
+   pyinstaller --clean --onedir --windowed --uac-admin --name "MigradorFirebird" migrador_firebird.py
+   ```
+4. Copie a pasta `Binarios\Firebird_5_0.zip` para dentro de `dist\MigradorFirebird\`.
