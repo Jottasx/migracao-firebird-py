@@ -448,22 +448,37 @@ class MigradorFirebirdApp:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             startupinfo=startupinfo,
-            bufsize=1,
+            bufsize=65536,  # Buffer de 64KB para leitura em alta velocidade
             universal_newlines=True,
             encoding="mbcs",
             errors="replace",
         )
 
-        # Lê linha a linha em tempo real diretamente do pipe (sem precisar de arquivo temp)
-        for linha in iter(proc.stdout.readline, ""):
-            linha_limpa = linha.rstrip("\r\n")
-            if linha_limpa:
-                self.gbak_queue.put(linha_limpa)
-                try:
-                    with open(self.caminho_arquivo_log, "a", encoding="utf-8") as f:
-                        f.write(f"[GBAK] {linha_limpa}\n")
-                except Exception:
-                    pass
+        # Abre o arquivo de log UMA ÚNICA VEZ com buffer de 64KB (elimina gargalo de disco/antivírus)
+        with open(self.caminho_arquivo_log, "a", encoding="utf-8", buffering=65536) as log_file:
+            ultimo_envio_ui = time.monotonic()
+            lote_ui = []
+
+            for linha in proc.stdout:
+                linha_limpa = linha.rstrip("\r\n")
+                if not linha_limpa:
+                    continue
+
+                # Grava direto no buffer em memória (flush automático a cada 64KB)
+                log_file.write(f"[GBAK] {linha_limpa}\n")
+                lote_ui.append(linha_limpa)
+
+                # Envia para a tela em blocos a cada 150ms (mantém apenas as últimas 200 linhas do lote)
+                agora = time.monotonic()
+                if agora - ultimo_envio_ui >= 0.15:
+                    if lote_ui:
+                        self.gbak_queue.put("\n".join(lote_ui[-200:]))
+                        lote_ui.clear()
+                    ultimo_envio_ui = agora
+
+            # Envia o restante residual para a tela
+            if lote_ui:
+                self.gbak_queue.put("\n".join(lote_ui[-200:]))
 
         proc.stdout.close()
         exit_code = proc.wait()
