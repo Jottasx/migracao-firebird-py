@@ -306,7 +306,7 @@ class MigradorFirebirdApp:
         confirmar = messagebox.askyesno(
             "Confirmar Início",
             f"Deseja iniciar a migração de {len(itens)} base(s)?\n"
-            "Certifique-se de que os sistemas estão fechados nos terminais.",
+            "A porta 53052 será bloqueada para os terminais durante o processo.",
         )
         if not confirmar:
             return
@@ -451,6 +451,44 @@ class MigradorFirebirdApp:
             errors="replace",
         )
 
+    def bloquear_acesso_externo_porta(self, porta):
+        """Bloqueia conexões dos terminais na porta TCP mantendo localhost funcional."""
+        nome_regra_allow = f"Firebird Fortes (Porta {porta})"
+        nome_regra_block = f"BLOQUEIO MIGRACAO Firebird Fortes (Porta {porta})"
+
+        self.log(f"Bloqueando acesso externo dos terminais na porta {porta} durante a migração...")
+        self.executar_comando_oculto(
+            ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra_allow}"]
+        )
+        self.executar_comando_oculto(
+            ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra_block}"]
+        )
+        self.executar_comando_oculto([
+            "netsh", "advfirewall", "firewall", "add", "rule",
+            f"name={nome_regra_block}", "dir=in", "action=block",
+            "protocol=TCP", f"localport={porta}", "profile=any"
+        ])
+        self.log(f"Acesso externo bloqueado na porta {porta} (tráfego local localhost preservado).")
+
+    def liberar_acesso_externo_porta(self, porta):
+        """Remove o bloqueio temporário e restaura a regra de liberação da porta TCP."""
+        nome_regra_allow = f"Firebird Fortes (Porta {porta})"
+        nome_regra_block = f"BLOQUEIO MIGRACAO Firebird Fortes (Porta {porta})"
+
+        self.log(f"Restaurando liberação de rede para os terminais na porta {porta}...")
+        self.executar_comando_oculto(
+            ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra_block}"]
+        )
+        self.executar_comando_oculto(
+            ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra_allow}"]
+        )
+        self.executar_comando_oculto([
+            "netsh", "advfirewall", "firewall", "add", "rule",
+            f"name={nome_regra_allow}", "dir=in", "action=allow",
+            "protocol=TCP", f"localport={porta}", "profile=any"
+        ])
+        self.log(f"Firewall liberado para os terminais na porta {porta}.")
+
     def executar_gbak_com_monitor(self, executavel, args_lista, tipo_operacao, nome_sistema):
         self.log(f"Iniciando execução do GBAK ({tipo_operacao}) para {nome_sistema}...")
 
@@ -535,6 +573,9 @@ class MigradorFirebirdApp:
         return "RUNNING" in res.stdout
 
     def worker_migracao(self, fila):
+        porta_padrao = "53052"
+        porta_bloqueada = False
+
         try:
             usuario_win = os.environ.get("USERNAME", "Desconhecido")
             computador = os.environ.get("COMPUTERNAME", "Local")
@@ -554,11 +595,14 @@ class MigradorFirebirdApp:
             caminho_fb50_instsvc = os.path.join(pasta_destino_fb50, "instsvc.exe")
             caminho_fb50_instreg = os.path.join(pasta_destino_fb50, "instreg.exe")
 
-            porta_padrao = "53052"
             usuario_fb = "SYSDBA"
             senha_fb = "masterkey"
             nome_instancia_fb50 = "Fortes_FB5_0"
             servico_fb50_server = f"FirebirdServer{nome_instancia_fb50}"
+
+            # Bloqueia o acesso externo imediatamente para evitar conexões de terminais
+            self.bloquear_acesso_externo_porta(porta_padrao)
+            porta_bloqueada = True
 
             # 1. Configuração do FB 5.0
             self.status_text = "Etapa 1: Preparando o Firebird 5.0..."
@@ -573,6 +617,12 @@ class MigradorFirebirdApp:
                     zip_ref.extractall(pasta_destino_fb50)
                 self.log("Extração finalizada com sucesso.")
 
+            if not os.path.exists(caminho_fb50_instsvc):
+                raise FileNotFoundError(
+                    f"Executável instsvc.exe não encontrado em {pasta_destino_fb50}. "
+                    "Verifique se o ZIP foi compactado sem subpasta raiz."
+                )
+
             if os.path.exists(caminho_fb50_instreg):
                 self.executar_comando_oculto([caminho_fb50_instreg, "install", pasta_destino_fb50])
 
@@ -585,17 +635,6 @@ class MigradorFirebirdApp:
                 )
                 time.sleep(2)
 
-            self.log(f"Garantindo regra de porta {porta_padrao} no Firewall do Windows...")
-            nome_regra = f"Firebird Fortes (Porta {porta_padrao})"
-            self.executar_comando_oculto(
-                ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra}"]
-            )
-            self.executar_comando_oculto([
-                "netsh", "advfirewall", "firewall", "add", "rule",
-                f"name={nome_regra}", "dir=in", "action=allow",
-                "protocol=TCP", f"localport={porta_padrao}", "profile=any"
-            ])
-            self.log(f"Firewall liberado para a porta {porta_padrao}.")
             self.progress += 1
 
             # 2. Backups via FB 2.5
@@ -742,6 +781,9 @@ class MigradorFirebirdApp:
             self.log(f"[FALHA CRÍTICA] {self.erro}")
             self.status_text = "Erro durante o processamento."
         finally:
+            # Garante que a porta sempre volte a ser liberada para os terminais, mesmo em caso de erro
+            if porta_bloqueada:
+                self.liberar_acesso_externo_porta(porta_padrao)
             self.concluido = True
 
 
