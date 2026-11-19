@@ -8,6 +8,7 @@ Compatível com Python 3.7 / 3.8 (Windows Server 2008 / 2008 R2 / 2012 R2 / 2016
 import os
 import re
 import sys
+import stat
 import time
 import shutil
 import zipfile
@@ -451,6 +452,89 @@ class MigradorFirebirdApp:
             errors="replace",
         )
 
+    def verificar_e_instalar_vcruntime_x86(self):
+        """Instala o Visual C++ Redistributable x86 silenciosamente se ausente no servidor."""
+        win_dir = os.environ.get("WINDIR", r"C:\Windows")
+        syswow64 = os.path.join(win_dir, "SysWOW64")
+        system32 = os.path.join(win_dir, "System32")
+
+        # Em Windows 64-bit, DLLs 32-bit ficam em SysWOW64; em Windows 32-bit, ficam em System32
+        pasta_dll_x86 = syswow64 if os.path.exists(syswow64) else system32
+        vcruntime_dll = os.path.join(pasta_dll_x86, "vcruntime140.dll")
+
+        if os.path.exists(vcruntime_dll):
+            self.log(f"Visual C++ Runtime x86 já instalado ({vcruntime_dll}).")
+            return
+
+        instalador_vcredist = os.path.join(self.script_dir, "Binarios", "vc_redist.x86.exe")
+        if not os.path.exists(instalador_vcredist):
+            self.log(
+                f"Aviso: vcruntime140.dll (x86) não encontrado e instalador ausente em {instalador_vcredist}."
+            )
+            return
+
+        self.log("Instalando Visual C++ Redistributable x86 (silencioso)...")
+        res = self.executar_comando_oculto([instalador_vcredist, "/install", "/quiet", "/norestart"])
+        if res.returncode in (0, 3010):
+            self.log(f"Visual C++ Redistributable x86 instalado com sucesso (código {res.returncode}).")
+        else:
+            self.log(
+                f"Aviso na instalação do Visual C++ Redistributable x86 (código {res.returncode})."
+            )
+
+    def remover_somente_leitura(self, caminho_arquivo):
+        """Remove atributo Read-Only do Windows para permitir exclusão ou renomeação."""
+        try:
+            if os.path.exists(caminho_arquivo):
+                os.chmod(caminho_arquivo, stat.S_IWRITE)
+        except Exception:
+            pass
+
+    def atualizar_dlls_sistema(self, pasta_fb50, dir_sistema, nome_sistema):
+        """Faz backup de fbclient.dll/gds32.dll (FB 2.5) e aplica as DLLs 32-bit do FB 5.0."""
+        # Prioriza subpasta WOW64 (DLL 32-bit dentro do pacote FB 5.0 x64), senão usa a raiz
+        fbclient_wow64 = os.path.join(pasta_fb50, "WOW64", "fbclient.dll")
+        fbclient_raiz = os.path.join(pasta_fb50, "fbclient.dll")
+        fbclient_origem = fbclient_wow64 if os.path.exists(fbclient_wow64) else fbclient_raiz
+
+        if not os.path.exists(fbclient_origem):
+            self.log(
+                f"Aviso: fbclient.dll não encontrada em {pasta_fb50} para atualizar a pasta de {nome_sistema}."
+            )
+            return
+
+        # 1. Backup das DLLs legadas (fbclient.dll -> fbclient_25.dll e gds32.dll -> gds32_25.dll)
+        for dll_nome, bkp_nome in (("fbclient.dll", "fbclient_25.dll"), ("gds32.dll", "gds32_25.dll")):
+            caminho_atual = os.path.join(dir_sistema, dll_nome)
+            caminho_bkp = os.path.join(dir_sistema, bkp_nome)
+            if os.path.exists(caminho_atual):
+                self.remover_somente_leitura(caminho_atual)
+                if os.path.exists(caminho_bkp):
+                    self.remover_somente_leitura(caminho_bkp)
+                    try:
+                        os.remove(caminho_bkp)
+                    except PermissionError:
+                        # Se o backup antigo estiver bloqueado, salva o atual com timestamp
+                        hora_fmt = datetime.now().strftime("%H%M%S")
+                        bkp_nome = f"{os.path.splitext(bkp_nome)[0]}_{hora_fmt}.dll"
+                        caminho_bkp = os.path.join(dir_sistema, bkp_nome)
+
+                os.rename(caminho_atual, caminho_bkp)
+                self.log(f"[{nome_sistema}] Backup realizado: {dll_nome} -> {bkp_nome}")
+
+        # 2. Copia fbclient.dll do FB 5.0 e cria cópia renomeada para gds32.dll
+        destino_fbclient = os.path.join(dir_sistema, "fbclient.dll")
+        destino_gds32 = os.path.join(dir_sistema, "gds32.dll")
+
+        self.remover_somente_leitura(destino_fbclient)
+        self.remover_somente_leitura(destino_gds32)
+
+        shutil.copy2(fbclient_origem, destino_fbclient)
+        shutil.copy2(fbclient_origem, destino_gds32)
+        self.log(
+            f"[{nome_sistema}] DLLs do Firebird 5.0 aplicadas (fbclient.dll e gds32.dll) em {dir_sistema}."
+        )
+
     def bloquear_acesso_externo_porta(self, porta):
         """Bloqueia conexões dos terminais na porta TCP mantendo localhost funcional."""
         nome_regra_allow = f"Firebird Fortes (Porta {porta})"
@@ -604,8 +688,9 @@ class MigradorFirebirdApp:
             self.bloquear_acesso_externo_porta(porta_padrao)
             porta_bloqueada = True
 
-            # 1. Configuração do FB 5.0
+            # 1. Configuração do FB 5.0 e Visual C++ Runtime x86
             self.status_text = "Etapa 1: Preparando o Firebird 5.0..."
+            self.verificar_e_instalar_vcruntime_x86()
             self.log("Checando binários do Firebird 5.0...")
 
             if not os.path.exists(caminho_fb50_gbak):
@@ -705,7 +790,7 @@ class MigradorFirebirdApp:
             self.log(f"Firebird 5.0 operacional e escutando na porta {porta_padrao}.")
             self.progress += 1
 
-            # 4. Restaurações via FB 5.0
+            # 4. Restaurações via FB 5.0 e Atualização de DLLs
             for item in fila:
                 sistema = item["sistema"]
                 self.status_text = f"Restaurando base do sistema: {sistema}..."
@@ -762,6 +847,9 @@ class MigradorFirebirdApp:
 
                 shutil.move(item["arquivo_banco_novo"], item["arquivo_banco_final"])
                 self.log(f"Base {sistema} migrada com sucesso disponível em: {item['arquivo_banco_final']}")
+
+                # Backup das DLLs antigas (FB 2.5) e aplicação das DLLs do Firebird 5.0
+                self.atualizar_dlls_sistema(pasta_destino_fb50, item["diretorio"], sistema)
 
                 self.item_updates.put({
                     "item_id": item["item_id"],
