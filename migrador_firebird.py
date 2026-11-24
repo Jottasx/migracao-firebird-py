@@ -31,9 +31,9 @@ class MigradorFirebirdApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Migrador Firebird 2.5 -> 5.0 (Fortes Tecnologia)")
-        self.root.geometry("820x775")
+        self.root.geometry("820x795")
         self.root.resizable(False, False)
-        self.centralizar_janela(820, 775)
+        self.centralizar_janela(820, 795)
 
         self.script_dir = obter_diretorio_base()
 
@@ -44,6 +44,9 @@ class MigradorFirebirdApp:
         self.caminho_arquivo_log = os.path.join(
             self.diretorio_logs, f"Migracao_FB25_FB50_{data_hora}.txt"
         )
+
+        # Variável de controle da porta do Firebird 5.0 (False = 53055 | True = 53052)
+        self.var_usar_porta_53052 = tk.BooleanVar(value=False)
 
         # Filas Thread-Safe para comunicação entre Worker e UI
         self.log_queue = queue.Queue()
@@ -159,7 +162,7 @@ class MigradorFirebirdApp:
         grp_progresso = tk.LabelFrame(
             self.root, text="Status da Operação", font=self.font_padrao
         )
-        grp_progresso.place(x=15, y=175, width=790, height=85)
+        grp_progresso.place(x=15, y=175, width=790, height=108)
 
         self.lbl_status = tk.Label(
             grp_progresso,
@@ -167,7 +170,7 @@ class MigradorFirebirdApp:
             font=self.font_titulo,
             anchor="w",
         )
-        self.lbl_status.place(x=15, y=8, width=630, height=22)
+        self.lbl_status.place(x=15, y=6, width=630, height=22)
 
         self.btn_abrir_log = tk.Button(
             grp_progresso,
@@ -176,12 +179,21 @@ class MigradorFirebirdApp:
             state="disabled",
             command=self.abrir_log,
         )
-        self.btn_abrir_log.place(x=655, y=6, width=115, height=25)
+        self.btn_abrir_log.place(x=655, y=4, width=115, height=25)
 
         self.progress_bar = ttk.Progressbar(
             grp_progresso, orient="horizontal", mode="determinate"
         )
-        self.progress_bar.place(x=15, y=36, width=755, height=22)
+        self.progress_bar.place(x=15, y=33, width=755, height=22)
+
+        self.chk_porta_53052 = tk.Checkbutton(
+            grp_progresso,
+            text="Mudar a porta padrão para 53052 (se desmarcado, o Firebird 5.0 utilizará a porta 53055)",
+            variable=self.var_usar_porta_53052,
+            font=self.font_padrao,
+            anchor="w",
+        )
+        self.chk_porta_53052.place(x=12, y=60, width=755, height=22)
 
         # 3. Seção: Monitor em Tempo Real do GBAK
         grp_gbak = tk.LabelFrame(
@@ -189,10 +201,10 @@ class MigradorFirebirdApp:
             text="Acompanhamento do GBAK em Tempo Real (Tabelas e Índices)",
             font=self.font_padrao,
         )
-        grp_gbak.place(x=15, y=265, width=790, height=210)
+        grp_gbak.place(x=15, y=288, width=790, height=205)
 
         frame_gbak = tk.Frame(grp_gbak)
-        frame_gbak.place(x=15, y=10, width=755, height=175)
+        frame_gbak.place(x=15, y=10, width=755, height=170)
 
         self.txt_gbak = tk.Text(
             frame_gbak,
@@ -211,7 +223,7 @@ class MigradorFirebirdApp:
         grp_logs = tk.LabelFrame(
             self.root, text="Log Geral de Operações", font=self.font_padrao
         )
-        grp_logs.place(x=15, y=480, width=790, height=220)
+        grp_logs.place(x=15, y=498, width=790, height=220)
 
         frame_logs = tk.Frame(grp_logs)
         frame_logs.place(x=15, y=10, width=755, height=185)
@@ -237,7 +249,7 @@ class MigradorFirebirdApp:
             fg="gray",
             anchor="e",
         )
-        lbl_creditos.place(x=15, y=708, width=790, height=20)
+        lbl_creditos.place(x=15, y=728, width=790, height=20)
 
     # --- EVENTOS DA INTERFACE ---
     def abrir_log(self):
@@ -304,10 +316,13 @@ class MigradorFirebirdApp:
             )
             return
 
+        porta_fb50 = "53052" if self.var_usar_porta_53052.get() else "53055"
+
         confirmar = messagebox.askyesno(
             "Confirmar Início",
             f"Deseja iniciar a migração de {len(itens)} base(s)?\n"
-            "A porta 53052 será bloqueada para os terminais durante o processo.",
+            f"O Firebird 5.0 será configurado na porta {porta_fb50}.\n"
+            "O acesso externo dos terminais será bloqueado durante o processo.",
         )
         if not confirmar:
             return
@@ -316,6 +331,7 @@ class MigradorFirebirdApp:
         self.btn_remover.config(state="disabled")
         self.btn_iniciar.config(state="disabled")
         self.btn_abrir_log.config(state="disabled")
+        self.chk_porta_53052.config(state="disabled")
 
         self.limpar_texto(self.txt_logs)
         self.limpar_texto(self.txt_gbak)
@@ -348,7 +364,9 @@ class MigradorFirebirdApp:
         self.em_execucao = True
 
         # Inicia a thread de trabalho em segundo plano
-        worker_thread = threading.Thread(target=self.worker_migracao, args=(fila,), daemon=True)
+        worker_thread = threading.Thread(
+            target=self.worker_migracao, args=(fila, porta_fb50), daemon=True
+        )
         worker_thread.start()
 
         # Inicia o loop de atualização da UI a cada 150ms (equivalente ao Timer do WinForms)
@@ -414,6 +432,7 @@ class MigradorFirebirdApp:
             self.btn_adicionar.config(state="normal")
             self.btn_remover.config(state="normal")
             self.btn_iniciar.config(state="normal")
+            self.chk_porta_53052.config(state="normal")
             if os.path.exists(self.caminho_arquivo_log):
                 self.btn_abrir_log.config(state="normal")
 
@@ -451,6 +470,39 @@ class MigradorFirebirdApp:
             encoding="mbcs",  # Encoding nativo do Windows (CP1252)
             errors="replace",
         )
+
+    def configurar_porta_firebird_conf(self, pasta_fb50, porta_destino):
+        """Ajusta o parâmetro RemoteServicePort dentro do firebird.conf do Firebird 5.0."""
+        caminho_conf = os.path.join(pasta_fb50, "firebird.conf")
+        if not os.path.exists(caminho_conf):
+            raise FileNotFoundError(f"Arquivo firebird.conf não encontrado em: {caminho_conf}")
+
+        self.remover_somente_leitura(caminho_conf)
+
+        with open(caminho_conf, "r", encoding="utf-8", errors="replace") as f:
+            linhas = f.readlines()
+
+        alterado = False
+        novas_linhas = []
+        padrao = re.compile(r"^\s*#?\s*RemoteServicePort\s*=", re.IGNORECASE)
+
+        for linha in linhas:
+            if padrao.match(linha):
+                if not alterado:
+                    novas_linhas.append(f"RemoteServicePort = {porta_destino}\n")
+                    alterado = True
+            else:
+                novas_linhas.append(linha)
+
+        if not alterado:
+            if novas_linhas and not novas_linhas[-1].endswith("\n"):
+                novas_linhas.append("\n")
+            novas_linhas.append(f"RemoteServicePort = {porta_destino}\n")
+
+        with open(caminho_conf, "w", encoding="utf-8") as f:
+            f.writelines(novas_linhas)
+
+        self.log(f"Arquivo firebird.conf configurado com RemoteServicePort = {porta_destino}.")
 
     def verificar_e_instalar_vcruntime_x86(self):
         """Instala o Visual C++ Redistributable x86 silenciosamente se ausente no servidor."""
@@ -535,43 +587,45 @@ class MigradorFirebirdApp:
             f"[{nome_sistema}] DLLs do Firebird 5.0 aplicadas (fbclient.dll e gds32.dll) em {dir_sistema}."
         )
 
-    def bloquear_acesso_externo_porta(self, porta):
-        """Bloqueia conexões dos terminais na porta TCP mantendo localhost funcional."""
-        nome_regra_allow = f"Firebird Fortes (Porta {porta})"
-        nome_regra_block = f"BLOQUEIO MIGRACAO Firebird Fortes (Porta {porta})"
+    def bloquear_acesso_externo_portas(self, portas):
+        """Bloqueia conexões dos terminais nas portas TCP informadas mantendo localhost funcional."""
+        for porta in set(portas):
+            nome_regra_allow = f"Firebird Fortes (Porta {porta})"
+            nome_regra_block = f"BLOQUEIO MIGRACAO Firebird Fortes (Porta {porta})"
 
-        self.log(f"Bloqueando acesso externo dos terminais na porta {porta} durante a migração...")
-        self.executar_comando_oculto(
-            ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra_allow}"]
-        )
-        self.executar_comando_oculto(
-            ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra_block}"]
-        )
-        self.executar_comando_oculto([
-            "netsh", "advfirewall", "firewall", "add", "rule",
-            f"name={nome_regra_block}", "dir=in", "action=block",
-            "protocol=TCP", f"localport={porta}", "profile=any"
-        ])
-        self.log(f"Acesso externo bloqueado na porta {porta} (tráfego local localhost preservado).")
+            self.log(f"Bloqueando acesso externo dos terminais na porta {porta} durante a migração...")
+            self.executar_comando_oculto(
+                ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra_allow}"]
+            )
+            self.executar_comando_oculto(
+                ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra_block}"]
+            )
+            self.executar_comando_oculto([
+                "netsh", "advfirewall", "firewall", "add", "rule",
+                f"name={nome_regra_block}", "dir=in", "action=block",
+                "protocol=TCP", f"localport={porta}", "profile=any"
+            ])
+        self.log("Acesso externo bloqueado para terminais (tráfego local localhost preservado).")
 
-    def liberar_acesso_externo_porta(self, porta):
-        """Remove o bloqueio temporário e restaura a regra de liberação da porta TCP."""
-        nome_regra_allow = f"Firebird Fortes (Porta {porta})"
-        nome_regra_block = f"BLOQUEIO MIGRACAO Firebird Fortes (Porta {porta})"
+    def liberar_acesso_externo_porta(self, portas_bloqueadas, porta_final_fb50):
+        """Remove os bloqueios temporários e libera a porta final configurada para o Firebird 5.0."""
+        for porta in set(portas_bloqueadas):
+            nome_regra_block = f"BLOQUEIO MIGRACAO Firebird Fortes (Porta {porta})"
+            self.executar_comando_oculto(
+                ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra_block}"]
+            )
 
-        self.log(f"Restaurando liberação de rede para os terminais na porta {porta}...")
-        self.executar_comando_oculto(
-            ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra_block}"]
-        )
+        nome_regra_allow = f"Firebird Fortes (Porta {porta_final_fb50})"
+        self.log(f"Restaurando liberação de rede para os terminais na porta {porta_final_fb50}...")
         self.executar_comando_oculto(
             ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nome_regra_allow}"]
         )
         self.executar_comando_oculto([
             "netsh", "advfirewall", "firewall", "add", "rule",
             f"name={nome_regra_allow}", "dir=in", "action=allow",
-            "protocol=TCP", f"localport={porta}", "profile=any"
+            "protocol=TCP", f"localport={porta_final_fb50}", "profile=any"
         ])
-        self.log(f"Firewall liberado para os terminais na porta {porta}.")
+        self.log(f"Firewall liberado para os terminais na porta {porta_final_fb50}.")
 
     def executar_gbak_com_monitor(self, executavel, args_lista, tipo_operacao, nome_sistema):
         self.log(f"Iniciando execução do GBAK ({tipo_operacao}) para {nome_sistema}...")
@@ -656,9 +710,10 @@ class MigradorFirebirdApp:
         res = self.executar_comando_oculto(["sc", "query", nome_servico])
         return "RUNNING" in res.stdout
 
-    def worker_migracao(self, fila):
-        porta_padrao = "53052"
-        porta_bloqueada = False
+    def worker_migracao(self, fila, porta_fb50):
+        porta_fb25 = "53052"
+        portas_bloqueadas = [porta_fb25, porta_fb50]
+        bloqueio_ativo = False
 
         try:
             usuario_win = os.environ.get("USERNAME", "Desconhecido")
@@ -667,6 +722,7 @@ class MigradorFirebirdApp:
             self.log("==========================================================")
             self.log("INÍCIO DO PROCESSO DE MIGRAÇÃO: FB 2.5 -> FB 5.0")
             self.log(f"Usuário Atual: {usuario_win} em {computador}")
+            self.log(f"Porta FB 2.5 (Origem): {porta_fb25} | Porta FB 5.0 (Destino): {porta_fb50}")
             self.log(f"Arquivo de Registro: {self.caminho_arquivo_log}")
             self.log("==========================================================")
 
@@ -685,8 +741,8 @@ class MigradorFirebirdApp:
             servico_fb50_server = f"FirebirdServer{nome_instancia_fb50}"
 
             # Bloqueia o acesso externo imediatamente para evitar conexões de terminais
-            self.bloquear_acesso_externo_porta(porta_padrao)
-            porta_bloqueada = True
+            self.bloquear_acesso_externo_portas(portas_bloqueadas)
+            bloqueio_ativo = True
 
             # 1. Configuração do FB 5.0 e Visual C++ Runtime x86
             self.status_text = "Etapa 1: Preparando o Firebird 5.0..."
@@ -707,6 +763,9 @@ class MigradorFirebirdApp:
                     f"Executável instsvc.exe não encontrado em {pasta_destino_fb50}. "
                     "Verifique se o ZIP foi compactado sem subpasta raiz."
                 )
+
+            # Ajusta a porta (53055 ou 53052) diretamente no firebird.conf
+            self.configurar_porta_firebird_conf(pasta_destino_fb50, porta_fb50)
 
             if os.path.exists(caminho_fb50_instreg):
                 self.executar_comando_oculto([caminho_fb50_instreg, "install", pasta_destino_fb50])
@@ -743,7 +802,7 @@ class MigradorFirebirdApp:
                     "tipo": "Processando",
                 })
 
-                conexao_fb25 = f"localhost/{porta_padrao}:{item['banco_origem']}"
+                conexao_fb25 = f"localhost/{porta_fb25}:{item['banco_origem']}"
                 args_gbak = [
                     "-b", "-v", "-g",
                     conexao_fb25,
@@ -775,19 +834,19 @@ class MigradorFirebirdApp:
                 self.progress += 1
 
             # 3. Transição de Motores
-            self.status_text = f"Realizando transição de motores na porta {porta_padrao}..."
+            self.status_text = f"Realizando transição de motores (FB 5.0 na porta {porta_fb50})..."
             self.parar_e_desinstalar_servicos_fb25(pasta_destino_fb25)
 
-            self.log(f"Iniciando serviço do Firebird 5.0 na porta {porta_padrao}...")
+            self.log(f"Iniciando serviço do Firebird 5.0 na porta {porta_fb50}...")
             self.executar_comando_oculto(["sc", "start", servico_fb50_server])
             time.sleep(3)
 
             if not self.verificar_servico_rodando(servico_fb50_server):
                 raise RuntimeError(
-                    f"O serviço Firebird 5.0 não conseguiu iniciar na porta {porta_padrao}."
+                    f"O serviço Firebird 5.0 não conseguiu iniciar na porta {porta_fb50}."
                 )
 
-            self.log(f"Firebird 5.0 operacional e escutando na porta {porta_padrao}.")
+            self.log(f"Firebird 5.0 operacional e escutando na porta {porta_fb50}.")
             self.progress += 1
 
             # 4. Restaurações via FB 5.0 e Atualização de DLLs
@@ -804,7 +863,7 @@ class MigradorFirebirdApp:
                 if os.path.exists(item["arquivo_banco_novo"]):
                     os.remove(item["arquivo_banco_novo"])
 
-                conexao_fb50 = f"localhost/{porta_padrao}:{item['arquivo_banco_novo']}"
+                conexao_fb50 = f"localhost/{porta_fb50}:{item['arquivo_banco_novo']}"
                 args_restore = [
                     "-c", "-v", "-p", "8192",
                     item["arquivo_backup_temp"],
@@ -859,7 +918,7 @@ class MigradorFirebirdApp:
                 self.progress += 1
 
             self.progress = self.max_progress
-            self.status_text = "Migração concluída com sucesso!"
+            self.status_text = f"Migração concluída com sucesso! (Porta FB 5.0: {porta_fb50})"
             self.log("==========================================================")
             self.log("MIGRAÇÃO FINALIZADA COM SUCESSO.")
             self.log("==========================================================")
@@ -869,9 +928,9 @@ class MigradorFirebirdApp:
             self.log(f"[FALHA CRÍTICA] {self.erro}")
             self.status_text = "Erro durante o processamento."
         finally:
-            # Garante que a porta sempre volte a ser liberada para os terminais, mesmo em caso de erro
-            if porta_bloqueada:
-                self.liberar_acesso_externo_porta(porta_padrao)
+            # Garante que os bloqueios sejam removidos e a porta do FB 5.0 fique liberada
+            if bloqueio_ativo:
+                self.liberar_acesso_externo_porta(portas_bloqueadas, porta_fb50)
             self.concluido = True
 
 
